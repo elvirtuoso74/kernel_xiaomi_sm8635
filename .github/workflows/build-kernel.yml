@@ -1,118 +1,117 @@
-name: Build Android Kernel
+name: Build Android GKI Kernel
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [ main, master ]
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 360
 
     steps:
+    # ---------------- CHECKOUT ----------------
     - name: Checkout source
       uses: actions/checkout@v4
       with:
         submodules: recursive
         fetch-depth: 0
 
-    - name: Install Dependencies
+    # ---------------- DEPENDENCIES ----------------
+    - name: Install dependencies
       run: |
         sudo apt update
         sudo apt install -y \
-          git device-tree-compiler lz4 xz-utils zlib1g-dev openjdk-17-jdk \
-          gcc g++ python3 python-is-python3 p7zip-full android-sdk-libsparse-utils erofs-utils \
-          flex bison gperf build-essential zip curl libc6-dev libncurses-dev \
-          libx11-dev libreadline-dev libgl1-mesa-dev python3-markdown \
-          libxml2-utils xsltproc make bc grep cpio kmod openssl libelf-dev \
-          pahole libssl-dev libarchive-tools zstd rsync wget
+          bc bison build-essential ccache curl flex g++ gcc git \
+          libelf-dev libncurses-dev libssl-dev lz4 pahole \
+          python3 python-is-python3 rsync unzip zip zstd \
+          device-tree-compiler xz-utils wget libxml2-utils xsltproc
 
-        wget http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
+        # required by some prebuilts
+        wget -q http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
         sudo dpkg -i libtinfo5_6.3-2ubuntu0.1_amd64.deb || true
 
-    - name: Download ZyCromerZ Clang
+    # ---------------- CLANG ----------------
+    - name: Download ZyCromerZ Clang 23
       run: |
-        mkdir -p $HOME/toolchains
-        cd $HOME/toolchains
+        mkdir -p $HOME/clang
+        cd $HOME/clang
 
-        wget https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz
-        tar -xvf Clang-23.0.0git-20260130.tar.gz
-        mv Clang-* clang
+        wget -q https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz
+        tar -xf Clang-23.0.0git-20260130.tar.gz
 
-        echo "CLANG_PATH=$HOME/toolchains/clang/bin" >> $GITHUB_ENV
+        # cari binary clang yang bener
+        CLANG_BIN=$(find $HOME/clang -type f -name clang | head -n 1)
+        CLANG_DIR=$(dirname "$CLANG_BIN")
 
+        echo "Using clang at: $CLANG_DIR"
+        echo "CLANG_PATH=$CLANG_DIR" >> $GITHUB_ENV
+
+    # ---------------- BUILD SCRIPT ----------------
     - name: Create build script
       run: |
         cat << 'EOF' > build.sh
-        #!/bin/bash
+        #!/usr/bin/env bash
+        set -e
 
-        echo -e "\n[INFO]: BUILD STARTED..!\n"
+        echo "===== ANDROID GKI KERNEL BUILD ====="
 
-        git submodule init && git submodule update
+        export KERNEL_ROOT=$(pwd)
+        export OUT_DIR=$KERNEL_ROOT/out
+        mkdir -p $OUT_DIR build
 
-        export KERNEL_ROOT="$(pwd)"
+        echo "Kernel root: $KERNEL_ROOT"
+        echo "Out dir: $OUT_DIR"
+        echo "Clang path: $CLANG_PATH"
+
+        # setup clang
+        export PATH="$CLANG_PATH:$PATH"
+        clang --version
+
+        # GKI LLVM build environment
         export ARCH=arm64
-        export KBUILD_BUILD_USER="@ravindu644"
+        export SUBARCH=arm64
+        export LLVM=1
+        export LLVM_IAS=1
+        export CC=clang
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-        mkdir -p "${KERNEL_ROOT}/out" "${KERNEL_ROOT}/build"
+        # ---------------- CONFIG ----------------
+        make O=$OUT_DIR ARCH=arm64 gki_defconfig
 
-        # Toolchain
-        export PATH="${CLANG_PATH}:${PATH}"
-        export CLANG_PATH="${CLANG_PATH}"
+        # ---------------- BUILD ----------------
+        make -j$(nproc) O=$OUT_DIR \
+            ARCH=arm64 \
+            CC=clang \
+            LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            Image
 
-        export BUILD_CC="${CLANG_PATH}/clang"
+        # ---------------- OUTPUT ----------------
+        cp $OUT_DIR/arch/arm64/boot/Image build/Image
 
-        export BUILD_OPTIONS=(
-            -C "${KERNEL_ROOT}"
-            O="${KERNEL_ROOT}/out"
-            -j"$(nproc)"
-            ARCH=arm64
-            CROSS_COMPILE=aarch64-linux-gnu-
-            CLANG_TRIPLE=aarch64-linux-gnu-
-            CC="${BUILD_CC}"
-            LLVM=1
-            LLVM_IAS=1
-            AR="${CLANG_PATH}/llvm-ar"
-            NM="${CLANG_PATH}/llvm-nm"
-            LD="${CLANG_PATH}/ld.lld"
-            STRIP="${CLANG_PATH}/llvm-strip"
-            OBJCOPY="${CLANG_PATH}/llvm-objcopy"
-            OBJDUMP="${CLANG_PATH}/llvm-objdump"
-            READELF="${CLANG_PATH}/llvm-readelf"
-            HOSTCC="${CLANG_PATH}/clang"
-            HOSTCXX="${CLANG_PATH}/clang++"
-        )
-
-        build_kernel(){
-            make "${BUILD_OPTIONS[@]}" gki_defconfig
-            make "${BUILD_OPTIONS[@]}" Image || exit 1
-
-            cp "${KERNEL_ROOT}/out/arch/arm64/boot/Image" "${KERNEL_ROOT}/build"
-
-            echo -e "\n[INFO]: BUILD FINISHED..!"
-        }
-
-        build_kernel
+        echo "===== BUILD SUCCESS ====="
         EOF
 
         chmod +x build.sh
 
+    # ---------------- BUILD ----------------
     - name: Build Kernel
       run: ./build.sh
 
-    - name: Prepare Release Tag
+    # ---------------- RELEASE ----------------
+    - name: Generate Tag
       id: tag
-      run: |
-        echo "tag=kernel-$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
+      run: echo "tag=gki-$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
 
-    - name: Upload to Release
+    - name: Upload Release
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ steps.tag.outputs.tag }}
-        name: Android Kernel Build ${{ steps.tag.outputs.tag }}
-        files: |
-          build/Image
+        name: GKI Kernel Build ${{ steps.tag.outputs.tag }}
+        files: build/Image
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
