@@ -37,11 +37,11 @@ jobs:
           wget -q https://github.com/ZyCromerZ/Clang/releases/download/15.0.7-20260208-release/Clang-15.0.7-20260208.tar.gz
           tar -xvf Clang-15.0.7-20260208.tar.gz
 
-          # auto detect folder
           CLANG_DIR=$(find $HOME/toolchain -maxdepth 1 -type d -name "*Clang*" | head -n 1)
-          echo "CLANG_PATH=$CLANG_DIR/bin" >> $GITHUB_ENV
-          echo "Detected clang: $CLANG_DIR"
+          echo "export CLANG_DIR=$CLANG_DIR" >> $GITHUB_WORKSPACE/clang.env
+          echo "Detected: $CLANG_DIR"
           ls $CLANG_DIR/bin
+
 
       - name: Setup ccache
         run: |
@@ -55,13 +55,14 @@ jobs:
 
       - name: Generate defconfig
         run: |
-          make O=out ARCH=arm64 LLVM=$CLANG_PATH/ LLVM_IAS=1 GKI_defconfig
-          make O=out ARCH=arm64 LLVM=$CLANG_PATH/ LLVM_IAS=1 olddefconfig
-
+          source clang.env
+          make O=out ARCH=arm64 LLVM=$CLANG_DIR/bin/ LLVM_IAS=1 GKI_defconfig
+          make O=out ARCH=arm64 LLVM=$CLANG_DIR/bin/ LLVM_IAS=1 olddefconfig
 
       - name: Build Kernel
         run: |
-          make -j$(nproc) O=out ARCH=arm64 LLVM=$CLANG_PATH/ LLVM_IAS=1
+          source clang.env
+          make -j$(nproc) O=out ARCH=arm64 LLVM=$CLANG_DIR/bin/ LLVM_IAS=1
 
       - name: Upload Image
         uses: actions/upload-artifact@v4
