@@ -55,13 +55,13 @@ jobs:
 
       - name: Generate defconfig
         run: |
-          PATH=$CLANG_PATH:$PATH make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 GKI_defconfig
-          PATH=$CLANG_PATH:$PATH make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+          make O=out ARCH=arm64 LLVM=$CLANG_PATH/ LLVM_IAS=1 GKI_defconfig
+          make O=out ARCH=arm64 LLVM=$CLANG_PATH/ LLVM_IAS=1 olddefconfig
 
 
       - name: Build Kernel
         run: |
-          PATH=$CLANG_PATH:$PATH make -j$(nproc) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
+          make -j$(nproc) O=out ARCH=arm64 LLVM=$CLANG_PATH/ LLVM_IAS=1
 
       - name: Upload Image
         uses: actions/upload-artifact@v4
