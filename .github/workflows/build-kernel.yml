@@ -36,7 +36,7 @@ jobs:
           cd $HOME/toolchain
           wget -q https://github.com/ZyCromerZ/Clang/releases/download/15.0.7-20260208-release/Clang-15.0.7-20260208.tar.gz
           tar -xvf Clang-15.0.7-20260208.tar.gz
-          echo "$HOME/toolchain/Clang-15.0.7-20260208/bin" >> $GITHUB_PATH
+          echo "TC=$HOME/toolchain/Clang-15.0.7-20260208" >> $GITHUB_ENV
 
       - name: Setup ccache
         run: |
@@ -47,35 +47,21 @@ jobs:
       - name: Prepare out directory
         run: mkdir out
 
+      - name: Set toolchain path
+        run: |
+          export PATH=$TC/bin:$PATH
+          echo "PATH=$TC/bin:$PATH" >> $GITHUB_ENV
+          which clang
+          which ld.lld
+          clang --version
+
       - name: Generate defconfig (GKI)
         run: |
-          make O=out ARCH=arm64 \
-          LLVM=1 LLVM_IAS=1 \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          GKI_defconfig
-
-      - name: Export LLVM variables
-        run: |
-          echo "CLANG_PATH=$HOME/toolchain/Clang-15.0.7-20260208/bin" >> $GITHUB_ENV
-
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 GKI_defconfig
 
       - name: Build Kernel
         run: |
-          make -j$(nproc --all) O=out ARCH=arm64 \
-          LLVM=1 LLVM_IAS=1 \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip
+          make -j$(nproc) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
 
       - name: Upload Image
         uses: actions/upload-artifact@v4
