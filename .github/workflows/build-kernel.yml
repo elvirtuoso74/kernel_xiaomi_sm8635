@@ -1,0 +1,74 @@
+name: Build Android Kernel (Clang)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      KBUILD_BUILD_USER: github
+      KBUILD_BUILD_HOST: actions
+      TZ: Asia/Jakarta
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git curl wget flex bison bc cpio zip unzip \
+            libssl-dev libelf-dev dwarves \
+            build-essential python3 rsync
+
+      - name: Download Clang Toolchain
+        run: |
+          mkdir -p $HOME/toolchain
+          cd $HOME/toolchain
+          wget -q https://github.com/ZyCromerZ/Clang/releases/download/15.0.7-20260208-release/Clang-15.0.7-20260208.tar.gz
+          tar -xvf Clang-15.0.7-20260208.tar.gz
+          echo "$HOME/toolchain/Clang-15.0.7-20260208/bin" >> $GITHUB_PATH
+
+      - name: Setup ccache
+        run: |
+          sudo apt install -y ccache
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=10G" >> $GITHUB_ENV
+
+      - name: Prepare out directory
+        run: mkdir out
+
+      - name: Generate defconfig (GKI)
+        run: |
+          make O=out \
+            ARCH=arm64 \
+            CC=clang \
+            LLVM=1 LLVM_IAS=1 \
+            GKI_defconfig
+
+      - name: Build Kernel
+        run: |
+          make -j$(nproc --all) O=out \
+            ARCH=arm64 \
+            CC=clang \
+            LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+      - name: Upload Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-Image
+          path: |
+            out/arch/arm64/boot/Image
+            out/arch/arm64/boot/Image.gz
+            out/arch/arm64/boot/Image.gz-dtb
