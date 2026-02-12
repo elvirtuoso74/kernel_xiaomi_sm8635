@@ -1,85 +1,118 @@
-name: Build Kernel
+name: Build Android Kernel
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
-    env:
-      ARCH: arm64
-      SUBARCH: arm64
-      LLVM: 1
-      LLVM_IAS: 1
-      ANDROID_MAJOR_VERSION: s
-      PLATFORM_VERSION: 13
-
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: recursive
+    - name: Checkout source
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
 
-      - name: Install packages
-        run: |
-          sudo apt update
-          sudo apt install -y \
-            git bc bison flex libssl-dev make \
-            libc6-dev libncurses5-dev libelf-dev \
-            dwarves curl xz-utils python3 wget
+    - name: Install Dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          git device-tree-compiler lz4 xz-utils zlib1g-dev openjdk-17-jdk \
+          gcc g++ python3 python-is-python3 p7zip-full android-sdk-libsparse-utils erofs-utils \
+          flex bison gperf build-essential zip curl libc6-dev libncurses-dev \
+          libx11-dev libreadline-dev libgl1-mesa-dev python3-markdown \
+          libxml2-utils xsltproc make bc grep cpio kmod openssl libelf-dev \
+          pahole libssl-dev libarchive-tools zstd rsync wget
 
-      # Install clang
-      - name: Setup Clang 23
-        run: |
-          mkdir -p $HOME/toolchain
-          cd $HOME/toolchain
-          wget -q https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz
-          tar -xf Clang-23.0.0git-20260130.tar.gz
+        wget http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
+        sudo dpkg -i libtinfo5_6.3-2ubuntu0.1_amd64.deb || true
 
-          CLANG_PATH=$(find $HOME/toolchain -maxdepth 1 -type d -name "Clang*" | head -n1)
+    - name: Download ZyCromerZ Clang
+      run: |
+        mkdir -p $HOME/toolchains
+        cd $HOME/toolchains
 
-          echo "PATH=$CLANG_PATH/bin:$PATH" >> $GITHUB_ENV
-          echo "LD=ld.lld" >> $GITHUB_ENV
-          echo "CC=clang" >> $GITHUB_ENV
-          echo "CXX=clang++" >> $GITHUB_ENV
-          echo "HOSTCC=clang" >> $GITHUB_ENV
-          echo "HOSTCXX=clang++" >> $GITHUB_ENV
-          echo "AR=llvm-ar" >> $GITHUB_ENV
-          echo "NM=llvm-nm" >> $GITHUB_ENV
-          echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
-          echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
-          echo "STRIP=llvm-strip" >> $GITHUB_ENV
+        wget https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz
+        tar -xvf Clang-23.0.0git-20260130.tar.gz
+        mv Clang-* clang
 
-      - name: Verify clang
-        run: |
-          which clang
-          clang --version
-          which ld.lld
+        echo "CLANG_PATH=$HOME/toolchains/clang/bin" >> $GITHUB_ENV
 
-      # DEFCONFIG (GKI 6.1 Qualcomm)
-      - name: Defconfig
-        run: |
-          mkdir -p out
-          make O=out GKI_defconfig
+    - name: Create build script
+      run: |
+        cat << 'EOF' > build.sh
+        #!/bin/bash
 
-      - name: Build Kernel
-        run: |
-          make -j$(nproc) O=out
+        echo -e "\n[INFO]: BUILD STARTED..!\n"
 
-      - name: Collect outputs
-        run: |
-          mkdir -p release
-          find out -type f \( -name "Image*" -o -name "*.dtb" -o -name "*.dtbo" \) -exec cp {} release/ \; || true
-          ls -R release || true
+        git submodule init && git submodule update
 
-      - name: Upload Release
-        if: always()
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: Kernel Build ${{ github.run_number }}
-          files: release/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        export KERNEL_ROOT="$(pwd)"
+        export ARCH=arm64
+        export KBUILD_BUILD_USER="@ravindu644"
+
+        mkdir -p "${KERNEL_ROOT}/out" "${KERNEL_ROOT}/build"
+
+        # Toolchain
+        export PATH="${CLANG_PATH}:${PATH}"
+        export CLANG_PATH="${CLANG_PATH}"
+
+        export BUILD_CC="${CLANG_PATH}/clang"
+
+        export BUILD_OPTIONS=(
+            -C "${KERNEL_ROOT}"
+            O="${KERNEL_ROOT}/out"
+            -j"$(nproc)"
+            ARCH=arm64
+            CROSS_COMPILE=aarch64-linux-gnu-
+            CLANG_TRIPLE=aarch64-linux-gnu-
+            CC="${BUILD_CC}"
+            LLVM=1
+            LLVM_IAS=1
+            AR="${CLANG_PATH}/llvm-ar"
+            NM="${CLANG_PATH}/llvm-nm"
+            LD="${CLANG_PATH}/ld.lld"
+            STRIP="${CLANG_PATH}/llvm-strip"
+            OBJCOPY="${CLANG_PATH}/llvm-objcopy"
+            OBJDUMP="${CLANG_PATH}/llvm-objdump"
+            READELF="${CLANG_PATH}/llvm-readelf"
+            HOSTCC="${CLANG_PATH}/clang"
+            HOSTCXX="${CLANG_PATH}/clang++"
+        )
+
+        build_kernel(){
+            make "${BUILD_OPTIONS[@]}" gki_defconfig
+            make "${BUILD_OPTIONS[@]}" Image || exit 1
+
+            cp "${KERNEL_ROOT}/out/arch/arm64/boot/Image" "${KERNEL_ROOT}/build"
+
+            echo -e "\n[INFO]: BUILD FINISHED..!"
+        }
+
+        build_kernel
+        EOF
+
+        chmod +x build.sh
+
+    - name: Build Kernel
+      run: ./build.sh
+
+    - name: Prepare Release Tag
+      id: tag
+      run: |
+        echo "tag=kernel-$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
+
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.tag.outputs.tag }}
+        name: Android Kernel Build ${{ steps.tag.outputs.tag }}
+        files: |
+          build/Image
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
