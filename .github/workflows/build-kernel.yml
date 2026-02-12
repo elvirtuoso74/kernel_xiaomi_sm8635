@@ -17,6 +17,7 @@ jobs:
       KBUILD_BUILD_USER: github
       KBUILD_BUILD_HOST: actions
       TZ: Asia/Jakarta
+      CLANG_PATH: /home/runner/toolchain/Clang-15.0.7-20260208/bin
 
     steps:
       - name: Checkout source
@@ -55,13 +56,15 @@ jobs:
           which ld.lld
           clang --version
 
-      - name: Generate defconfig (GKI)
+      - name: Generate defconfig
         run: |
-          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 GKI_defconfig
+          PATH=$CLANG_PATH:$PATH make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 GKI_defconfig
+          PATH=$CLANG_PATH:$PATH make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+
 
       - name: Build Kernel
         run: |
-          make -j$(nproc) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
+          PATH=$CLANG_PATH:$PATH make -j$(nproc) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
 
       - name: Upload Image
         uses: actions/upload-artifact@v4
