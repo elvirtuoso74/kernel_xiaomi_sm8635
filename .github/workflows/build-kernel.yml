@@ -7,6 +7,14 @@ jobs:
   build:
     runs-on: ubuntu-22.04
 
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      LLVM: 1
+      LLVM_IAS: 1
+      ANDROID_MAJOR_VERSION: s
+      PLATFORM_VERSION: 13
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -14,7 +22,6 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      # Dependencies
       - name: Install packages
         run: |
           sudo apt update
@@ -23,77 +30,50 @@ jobs:
             libc6-dev libncurses5-dev libelf-dev \
             dwarves curl xz-utils python3 wget
 
-      # Download Clang
+      # Install clang
       - name: Setup Clang 23
         run: |
           mkdir -p $HOME/toolchain
           cd $HOME/toolchain
           wget -q https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz
           tar -xf Clang-23.0.0git-20260130.tar.gz
-          CLANG_DIR=$(find $HOME/toolchain -maxdepth 1 -type d -name "Clang*" | head -n1)
-          echo "CLANG_DIR=$CLANG_DIR" >> $GITHUB_ENV
 
-      # Create build script
-      - name: Generate build.sh
+          CLANG_PATH=$(find $HOME/toolchain -maxdepth 1 -type d -name "Clang*" | head -n1)
+
+          echo "PATH=$CLANG_PATH/bin:$PATH" >> $GITHUB_ENV
+          echo "LD=ld.lld" >> $GITHUB_ENV
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
+          echo "HOSTCC=clang" >> $GITHUB_ENV
+          echo "HOSTCXX=clang++" >> $GITHUB_ENV
+          echo "AR=llvm-ar" >> $GITHUB_ENV
+          echo "NM=llvm-nm" >> $GITHUB_ENV
+          echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
+          echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
+          echo "STRIP=llvm-strip" >> $GITHUB_ENV
+
+      - name: Verify clang
         run: |
-          cat << 'EOF' > build.sh
-          #!/usr/bin/env bash
-          set -e
-
-          KERNEL_DIR=$(pwd)
-          OUT_DIR=$KERNEL_DIR/out
-
-          export PATH=$CLANG_DIR/bin:$PATH
-
-          export ARCH=arm64
-          export SUBARCH=arm64
-
-          export LLVM=1
-          export LLVM_IAS=1
-
-          export CC=clang
-          export CXX=clang++
-          export HOSTCC=clang
-          export HOSTCXX=clang++
-
-          export LD=ld.lld
-          export AR=llvm-ar
-          export NM=llvm-nm
-          export OBJCOPY=llvm-objcopy
-          export OBJDUMP=llvm-objdump
-          export STRIP=llvm-strip
-          export READELF=llvm-readelf
-
-          export ANDROID_MAJOR_VERSION=s
-          export PLATFORM_VERSION=13
-
-          echo "Using clang:"
+          which clang
           clang --version
+          which ld.lld
 
-          rm -rf $OUT_DIR
-          mkdir -p $OUT_DIR
+      # DEFCONFIG (GKI 6.1 Qualcomm)
+      - name: Defconfig
+        run: |
+          mkdir -p out
+          make O=out GKI_defconfig
 
-          # Defconfig
-          make O=$OUT_DIR ARCH=arm64 LLVM=1 LLVM_IAS=1 GKI_defconfig
+      - name: Build Kernel
+        run: |
+          make -j$(nproc) O=out
 
-          # Build
-          make -j$(nproc) O=$OUT_DIR ARCH=arm64 LLVM=1 LLVM_IAS=1
-          EOF
-
-          chmod +x build.sh
-
-      # Compile
-      - name: Compile Kernel
-        run: ./build.sh
-
-      # Collect outputs
-      - name: Prepare artifacts
+      - name: Collect outputs
         run: |
           mkdir -p release
           find out -type f \( -name "Image*" -o -name "*.dtb" -o -name "*.dtbo" \) -exec cp {} release/ \; || true
-          ls -al release || true
+          ls -R release || true
 
-      # Upload
       - name: Upload Release
         if: always()
         uses: softprops/action-gh-release@v2
