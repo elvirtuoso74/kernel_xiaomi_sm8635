@@ -17,8 +17,7 @@ jobs:
       KBUILD_BUILD_USER: github
       KBUILD_BUILD_HOST: actions
       TZ: Asia/Jakarta
-      CLANG_PATH: /home/runner/toolchain/Clang-15.0.7-20260208/bin
-
+      
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -38,6 +37,12 @@ jobs:
           wget -q https://github.com/ZyCromerZ/Clang/releases/download/15.0.7-20260208-release/Clang-15.0.7-20260208.tar.gz
           tar -xvf Clang-15.0.7-20260208.tar.gz
 
+          # auto detect folder
+          CLANG_DIR=$(find $HOME/toolchain -maxdepth 1 -type d -name "*Clang*" | head -n 1)
+          echo "CLANG_PATH=$CLANG_DIR/bin" >> $GITHUB_ENV
+          echo "Detected clang: $CLANG_DIR"
+          ls $CLANG_DIR/bin
+
       - name: Setup ccache
         run: |
           sudo apt install -y ccache
@@ -47,14 +52,6 @@ jobs:
       - name: Prepare out directory
         run: mkdir out
 
-      - name: Set toolchain path
-        run: |
-          TOOLCHAIN=$HOME/toolchain/Clang-15.0.7-20260208
-          echo "$TOOLCHAIN/bin" >> $GITHUB_PATH
-          export PATH=$TOOLCHAIN/bin:$PATH
-          which clang
-          which ld.lld
-          clang --version
 
       - name: Generate defconfig
         run: |
