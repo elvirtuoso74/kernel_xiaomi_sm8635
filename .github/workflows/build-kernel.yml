@@ -1,113 +1,105 @@
 name: Build Kernel
 
 on:
-workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
-build:
-runs-on: ubuntu-22.04
+  build:
+    runs-on: ubuntu-22.04
 
-steps:
-- name: Checkout source
-  uses: actions/checkout@v4
-  with:
-    fetch-depth: 0
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
 
-# Dependencies
-- name: Install packages
-  run: |
-    sudo apt update
-    sudo apt install -y \
-      git bc bison flex libssl-dev make \
-      libc6-dev libncurses5-dev libelf-dev \
-      dwarves curl xz-utils python3
+      # Dependencies
+      - name: Install packages
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git bc bison flex libssl-dev make \
+            libc6-dev libncurses5-dev libelf-dev \
+            dwarves curl xz-utils python3 wget
 
-# Download Clang 23
-- name: Setup Clang 23
-  run: |
-    mkdir -p $HOME/toolchain
-    cd $HOME/toolchain
-    wget https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz
-    tar -xvf Clang-23.0.0git-20260130.tar.gz
-    echo "CLANG INSTALLED:"
-    ls $HOME/toolchain
+      # Download Clang
+      - name: Setup Clang 23
+        run: |
+          mkdir -p $HOME/toolchain
+          cd $HOME/toolchain
+          wget -q https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz
+          tar -xf Clang-23.0.0git-20260130.tar.gz
+          CLANG_DIR=$(find $HOME/toolchain -maxdepth 1 -type d -name "Clang*" | head -n1)
+          echo "CLANG_DIR=$CLANG_DIR" >> $GITHUB_ENV
 
-# Create build script
-- name: Generate build.sh
-  run: |
-    cat << 'EOF' > build.sh
-    #!/usr/bin/env bash
-    set -e
+      # Create build script
+      - name: Generate build.sh
+        run: |
+          cat << 'EOF' > build.sh
+          #!/usr/bin/env bash
+          set -e
 
-    KERNEL_DIR=$(pwd)
-    OUT_DIR=$KERNEL_DIR/out
-    CLANG_DIR=$HOME/toolchain/Clang-23.0.0git-20260130
+          KERNEL_DIR=$(pwd)
+          OUT_DIR=$KERNEL_DIR/out
 
-    export PATH=$CLANG_DIR/bin:$PATH
+          export PATH=$CLANG_DIR/bin:$PATH
 
-    # LLVM FULL MODE
-    export LLVM=1
-    export LLVM_IAS=1
+          export ARCH=arm64
+          export SUBARCH=arm64
 
-    export CC=clang
-    export CXX=clang++
-    export LD=ld.lld
-    export AR=llvm-ar
-    export NM=llvm-nm
-    export OBJCOPY=llvm-objcopy
-    export OBJDUMP=llvm-objdump
-    export STRIP=llvm-strip
-    export READELF=llvm-readelf
+          export LLVM=1
+          export LLVM_IAS=1
 
-    export ARCH=arm64
-    export SUBARCH=arm64
+          export CC=clang
+          export CXX=clang++
+          export HOSTCC=clang
+          export HOSTCXX=clang++
 
-    export ANDROID_MAJOR_VERSION=s
-    export PLATFORM_VERSION=13
+          export LD=ld.lld
+          export AR=llvm-ar
+          export NM=llvm-nm
+          export OBJCOPY=llvm-objcopy
+          export OBJDUMP=llvm-objdump
+          export STRIP=llvm-strip
+          export READELF=llvm-readelf
 
-    echo "Using clang:"
-    clang --version
-    ld.lld --version
+          export ANDROID_MAJOR_VERSION=s
+          export PLATFORM_VERSION=13
 
-    # Clean old build
-    rm -rf $OUT_DIR
-    mkdir -p $OUT_DIR
+          echo "Using clang:"
+          clang --version
 
-    # Defconfig
-    make O=$OUT_DIR GKI_defconfig
+          rm -rf $OUT_DIR
+          mkdir -p $OUT_DIR
 
-    # Build
-    make -j$(nproc --all) O=$OUT_DIR \
-        CC=clang \
-        LD=ld.lld \
-        AR=llvm-ar \
-        NM=llvm-nm \
-        OBJCOPY=llvm-objcopy \
-        OBJDUMP=llvm-objdump \
-        STRIP=llvm-strip
-    EOF
+          # Defconfig
+          make O=$OUT_DIR ARCH=arm64 LLVM=1 LLVM_IAS=1 GKI_defconfig
 
-    chmod +x build.sh
+          # Build
+          make -j$(nproc) O=$OUT_DIR ARCH=arm64 LLVM=1 LLVM_IAS=1
+          EOF
 
-# Compile
-- name: Compile Kernel
-  run: ./build.sh
+          chmod +x build.sh
 
-# Collect outputs
-- name: Prepare artifacts
-  run: |
-    mkdir release
-    find out -name "Image*" -exec cp {} release/ \; || true
-    find out -name "*.dtb" -exec cp {} release/ \; || true
-    find out -name "*.dtbo" -exec cp {} release/ \; || true
+      # Compile
+      - name: Compile Kernel
+        run: ./build.sh
 
-# Upload
-- name: Upload Release
-  uses: softprops/action-gh-release@v2
-  with:
-    tag_name: build-${{ github.run_number }}
-    name: Kernel Build ${{ github.run_number }}
-    files: release/*
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+      # Collect outputs
+      - name: Prepare artifacts
+        run: |
+          mkdir -p release
+          find out -type f \( -name "Image*" -o -name "*.dtb" -o -name "*.dtbo" \) -exec cp {} release/ \; || true
+          ls -al release || true
+
+      # Upload
+      - name: Upload Release
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Kernel Build ${{ github.run_number }}
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
